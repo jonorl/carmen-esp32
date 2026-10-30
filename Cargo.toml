@@ -1,0 +1,31 @@
+[package]
+name = "carmen-esp32"
+version = "0.1.0"
+edition = "2024"
+default-run = "carmen-esp32"
+description = "Where in the World? on an ESP32-S3 with an ILI9341 touch screen and a piezo."
+
+[[bin]]
+name = "carmen-esp32"
+harness = false # no test harness on the device; keeps rust-analyzer quiet
+
+[dependencies]
+esp-idf-svc = "0.53"
+log = "0.4"
+anyhow = "1"
+serde_json = "1"
+mipidsi = "0.10"
+embedded-graphics-core = "0.4"
+
+[build-dependencies]
+embuild = "0.33"
+
+# The art is painted on the device, so it needs speed more than size; 16 MB of flash leaves room.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+debug = true # symbols stay on the computer, not in flash
+opt-level = "s"
