@@ -17,8 +17,12 @@ for the next). The original's animations play in the text panel (henchmen,
 the final city's warnings, the chase, the walk to jail and the jail; a tap
 skips one), with its tunes on the piezo. Tap the clock to switch between
 English and Spanish. Arrests are kept in flash per name, and promote you as
-in the game. Still to come: the printer, the departure map, proper button
-icons and the online roster.
+in the game; over WiFi they're also kept on the bureau's server, as the
+desktop and web games keep them, so a rank follows its detective everywhere.
+The detective roster (from headquarters, or the crime computer's last row)
+lists everyone on the server, or this device's records without it; the files
+(the crime computer's last row) show each suspect's photo and dossier. Still
+to come: the printer, the departure map and proper button icons.
 
 ## Wiring
 
@@ -43,6 +47,13 @@ icons and the online roster.
 GPIO 10-13 are SPI2's own pins, so the screen can run at 40 MHz. Kept clear:
 0, 3, 45 and 46 (boot straps), 19 and 20 (USB), 26-37 (flash and PSRAM), 43
 and 44 (the console) and the RGB LED (38 or 48).
+
+## WiFi
+
+`cfg.toml` (kept out of git; copy `cfg.toml.example`) names the network and
+the bureau's server, and is built into the firmware, as in the pollution
+firmware: rebuild after changing it. The game starts without waiting for the
+network; with none, arrests stay on the device and the roster shows its own.
 
 ## Building
 
@@ -73,6 +84,8 @@ Copied from the game at commit `4e0a45c`, then freed of macroquad:
   language, so it starts in English until one is chosen; the choice is saved
   through `src/device/storage.rs` (flash) instead of the game's files.
 - `countries.json`, `suspects.json`
+- `assets/suspects/`: the suspects' dossier photos (66x96), made from photos
+  of the family by Carmen's `tools/portrait.sh`.
 - `assets/sprites/`: the original's animation frames, traced by Carmen from
   recordings of it.
 - The tunes: `src/device/tunes.rs` is written from Carmen's recordings

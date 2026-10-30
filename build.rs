@@ -68,6 +68,8 @@ fn main() {
     embuild::espidf::sysenv::output();
     println!("cargo:rerun-if-changed=assets/fonts");
     println!("cargo:rerun-if-changed=assets/sprites");
+    println!("cargo:rerun-if-changed=assets/suspects");
+    println!("cargo:rerun-if-changed=cfg.toml");
     sprites();
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -211,12 +213,37 @@ fn font_data(out: &mut String, set: &str, size: u32, ascent: i32, line: i32, gly
 }
 
 /// Each strip as raw RGBA, and a `Strip` naming it, in upper case after its
-/// file (`henchman-stride.png` is `HENCHMAN_STRIDE`).
+/// file (`henchman-stride.png` is `HENCHMAN_STRIDE`); and the suspects'
+/// photos the same way, listed by file name in `PHOTOS`.
 fn sprites() {
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let mut code = String::new();
-    let mut files: Vec<_> = std::fs::read_dir("assets/sprites").expect("assets/sprites").filter_map(Result::ok).map(|e| e.path()).collect();
+    for (stem, w, h) in rgba_files("assets/sprites", &out_dir, "") {
+        let name = stem.to_uppercase().replace('-', "_");
+        writeln!(
+            code,
+            "pub static {name}: Strip = Strip {{ w: {w}, h: {h}, rgba: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{stem}.rgba\")) }};"
+        )
+        .unwrap();
+    }
+    std::fs::write(out_dir.join("sprites.rs"), code).unwrap();
+    let mut photos = String::from("pub static PHOTOS: &[(&str, Strip)] = &[\n");
+    for (stem, w, h) in rgba_files("assets/suspects", &out_dir, "photo-") {
+        writeln!(
+            photos,
+            "    ({stem:?}, Strip {{ w: {w}, h: {h}, rgba: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/photo-{stem}.rgba\")) }}),"
+        )
+        .unwrap();
+    }
+    photos.push_str("];\n");
+    std::fs::write(out_dir.join("photos.rs"), photos).unwrap();
+}
+
+/// Every PNG in `dir` written to `out_dir` as `<prefix><stem>.rgba`; their stems and sizes, by name.
+fn rgba_files(dir: &str, out_dir: &std::path::Path, prefix: &str) -> Vec<(String, u32, u32)> {
+    let mut files: Vec<_> = std::fs::read_dir(dir).expect("an assets folder").filter_map(Result::ok).map(|e| e.path()).collect();
     files.sort();
+    let mut out = Vec::new();
     for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "png")) {
         let stem = path.file_stem().unwrap().to_string_lossy().to_string();
         let mut decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()));
@@ -224,16 +251,8 @@ fn sprites() {
         let mut reader = decoder.read_info().expect("a readable PNG");
         let mut buf = vec![0; reader.output_buffer_size().expect("a PNG size")];
         let info = reader.next_frame(&mut buf).expect("a PNG frame");
-        let rgba = &buf[..info.buffer_size()];
-        std::fs::write(out_dir.join(format!("{stem}.rgba")), rgba).unwrap();
-        writeln!(
-            code,
-            "pub static {}: Strip = Strip {{ w: {}, h: {}, rgba: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{stem}.rgba\")) }};",
-            stem.to_uppercase().replace('-', "_"),
-            info.width,
-            info.height
-        )
-        .unwrap();
+        std::fs::write(out_dir.join(format!("{prefix}{stem}.rgba")), &buf[..info.buffer_size()]).unwrap();
+        out.push((stem, info.width, info.height));
     }
-    std::fs::write(out_dir.join("sprites.rs"), code).unwrap();
+    out
 }

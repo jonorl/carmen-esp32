@@ -14,11 +14,13 @@ use std::time::Instant;
 use crate::art::pixels::{Canvas, Rgb};
 use crate::art::postcard;
 use crate::art::scene::TimeOfDay;
-use crate::device::progress::{MAX_NAME, Progress};
+use crate::art::sprites;
+use crate::device::net::Net;
+use crate::device::progress::{self, Detective, MAX_NAME, News, Progress};
 use crate::device::sound::{self, Notes};
 use crate::display::{H, W};
 use crate::lang::{self, Lang, lang, tr};
-use crate::rules::data::Data;
+use crate::rules::data::{Data, sex_shown};
 use crate::rules::game::{Game, Line, RANKS, Tone, agency, clock_text, game_title, hour_of_day, promotion_news, rank_for};
 use crate::rules::game::{PLACES, same};
 use crate::rules::rng::Rng;
@@ -37,6 +39,10 @@ enum Target {
     Panel,
     /// The clock box: switches language.
     Clock,
+    /// The detective roster: a button at headquarters, half the crime computer's last row.
+    Roster,
+    /// Everyone's files: the other half of that row.
+    Files,
 }
 
 enum Panel {
@@ -54,6 +60,12 @@ enum Panel {
     Notes(Pager),
     /// Animated moments, one after another, then what happened.
     Scene(Scene),
+    /// Asking the bureau for the detective's arrests as they sign in.
+    Checking(Instant),
+    /// Every detective on file; `online` is None while the server's asked.
+    Roster { pager: Pager, from_hq: bool, online: Option<bool>, asked: Instant },
+    /// One suspect's file, `who` in the data's order.
+    Dossier { who: usize, pager: Pager },
 }
 
 struct Scene {
@@ -93,6 +105,10 @@ const KEY_COLUMNS: i32 = 6;
 
 /// Rows of a list in the text panel: a heading, then rows this tall.
 const LIST_ROW: i32 = 22;
+/// How long signing in waits for the bureau, as the desktop does.
+const CHECK_SECONDS: f64 = 4.0;
+/// How long the roster waits for the bureau before showing this device's records.
+const ROSTER_SECONDS: f64 = 12.0;
 
 pub struct App {
     data: Rc<Data>,
@@ -110,12 +126,13 @@ pub struct App {
 }
 
 impl App {
-    /// Starts at headquarters. `seed` gives each new case its randomness.
-    pub fn new(data: Rc<Data>, seed: fn() -> u64) -> App {
+    /// Starts at headquarters. `seed` gives each new case its randomness;
+    /// `net` reaches the bureau's server, if there's WiFi.
+    pub fn new(data: Rc<Data>, seed: fn() -> u64, net: Option<Net>) -> App {
         App {
             data,
             fonts: Fonts::new(),
-            progress: Progress::load(),
+            progress: Progress::load(net),
             seed,
             name: String::new(),
             game: None,
@@ -131,13 +148,45 @@ impl App {
         std::mem::take(&mut self.cues)
     }
 
+    /// Whether something moves on by itself: a scene, or a wait for the bureau.
     pub fn animating(&self) -> bool {
-        matches!(self.panel, Panel::Scene(_))
+        matches!(self.panel, Panel::Scene(_) | Panel::Checking(_) | Panel::Roster { online: None, .. })
+    }
+
+    /// Takes in the bureau's answers. Call often.
+    pub fn poll(&mut self) -> Redraw {
+        let mut redraw = Redraw::Nothing;
+        for news in self.progress.poll() {
+            match news {
+                News::LookedUp if matches!(self.panel, Panel::Checking(_)) => {
+                    self.new_case();
+                    redraw = Redraw::Everything;
+                }
+                News::Roster(list) if matches!(self.panel, Panel::Roster { online: None, .. }) => {
+                    self.show_roster(list);
+                    redraw = Redraw::Everything;
+                }
+                _ => {}
+            }
+        }
+        redraw
     }
 
     /// Moves a scene on: plays its cues as they come due, and goes to the
-    /// next stage, or to what happened, when one ends.
+    /// next stage, or to what happened, when one ends. Gives up on the
+    /// bureau when it's slow.
     pub fn tick(&mut self) -> Redraw {
+        match &self.panel {
+            Panel::Checking(since) if since.elapsed().as_secs_f64() >= CHECK_SECONDS => {
+                self.new_case();
+                return Redraw::Everything;
+            }
+            Panel::Roster { online: None, asked, .. } if asked.elapsed().as_secs_f64() >= ROSTER_SECONDS => {
+                self.show_roster(None);
+                return Redraw::Everything;
+            }
+            _ => {}
+        }
         let Panel::Scene(scene) = &mut self.panel else { return Redraw::Nothing };
         let t = scene.started.elapsed().as_secs_f64();
         let cues = scene.stages[0].cues();
@@ -194,7 +243,7 @@ impl App {
 
     fn buttons_on(&self) -> bool {
         self.game.as_ref().is_some_and(|g| !g.over)
-            && !matches!(self.panel, Panel::Name | Panel::Story { then: Then::Arrive, .. } | Panel::Scene(_))
+            && !matches!(self.panel, Panel::Name | Panel::Story { then: Then::Arrive, .. } | Panel::Scene(_) | Panel::Checking(_))
     }
 
     fn target_at(&self, x: i32, y: i32) -> Option<Target> {
@@ -203,6 +252,9 @@ impl App {
         }
         if let Some(i) = BUTTONS.iter().position(|b| b.contains(x, y)) {
             return self.buttons_on().then_some(Target::Button(BUTTON_ORDER[i]));
+        }
+        if matches!(self.panel, Panel::Name) && hq_roster_button().contains(x, y) {
+            return Some(Target::Roster);
         }
         if !TEXT.contains(x, y) {
             return None;
@@ -214,10 +266,18 @@ impl App {
                 let k = (ky * KEY_COLUMNS + kx) as usize;
                 (y >= keyboard_top() && kx < KEY_COLUMNS && k < KEYS.len()).then_some(Target::Key(k))
             }
-            Panel::Story { .. } | Panel::Notes(_) | Panel::Scene(_) => Some(Target::Panel),
+            Panel::Story { .. } | Panel::Notes(_) | Panel::Scene(_) | Panel::Roster { .. } | Panel::Dossier { .. } => Some(Target::Panel),
+            Panel::Checking(_) => None,
             Panel::Places(_) => self.list_row(y, 3),
             Panel::Flights(dests) => self.list_row(y, dests.len()),
-            Panel::Crime => self.list_row(y, self.game.as_ref().map_or(0, |g| g.warrant.len() + 1)),
+            Panel::Crime => {
+                // The fields, COMPUTE, then a row split between the files and the roster.
+                let fields = self.game.as_ref().map_or(0, |g| g.warrant.len());
+                match self.list_row(y, fields + 2) {
+                    Some(Target::Row(i)) if i == fields + 1 => Some(if x < area.x + area.w / 2 { Target::Files } else { Target::Roster }),
+                    other => other,
+                }
+            }
         }
     }
 
@@ -248,6 +308,14 @@ impl App {
                 self.button(b);
             }
             Target::Row(i) => self.row(i),
+            Target::Roster => {
+                self.cues.push(Some(sound::TICK));
+                self.ask_roster();
+            }
+            Target::Files => {
+                self.cues.push(Some(sound::TICK));
+                self.dossier(0);
+            }
         }
     }
 
@@ -259,7 +327,12 @@ impl App {
             "LANG" => lang::choose(if lang() == Lang::En { Lang::Es } else { Lang::En }),
             "OK" => {
                 if !self.name.trim().is_empty() {
-                    self.new_case();
+                    // The bureau may know them from another device; don't wait long.
+                    if self.progress.look_up(&self.name) {
+                        self.panel = Panel::Checking(Instant::now());
+                    } else {
+                        self.new_case();
+                    }
                 }
             }
             letter => {
@@ -290,8 +363,99 @@ impl App {
                     pager.page = 0;
                 }
             }
+            Panel::Roster { pager, from_hq, .. } => {
+                if !pager.turn(f, area) {
+                    self.panel = if *from_hq { Panel::Name } else { Panel::Crime };
+                }
+            }
+            Panel::Dossier { who, pager } => {
+                // After the last page of a file, the next suspect's.
+                if !pager.turn(f, area) {
+                    let next = (*who + 1) % self.data.suspects.len();
+                    self.dossier(next);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Asks the bureau for the roster; this device's records if there's no server.
+    fn ask_roster(&mut self) {
+        let from_hq = self.game.is_none();
+        if self.progress.ask_roster() {
+            let waiting = ui::rows(&self.fonts.body, tr("Asking the bureau…", "Consultando a la agencia…"), ui::GREY, text_area().w);
+            self.panel = Panel::Roster { pager: Pager::new(waiting), from_hq, online: None, asked: Instant::now() };
+        } else {
+            self.panel = Panel::Roster { pager: Pager::default(), from_hq, online: Some(false), asked: Instant::now() };
+            self.show_roster(None);
+        }
+    }
+
+    /// The roster: `list` from the bureau, or this device's records if None.
+    fn show_roster(&mut self, list: Option<Vec<Detective>>) {
+        let Panel::Roster { from_hq, .. } = self.panel else { return };
+        let online = list.is_some();
+        let list = list.unwrap_or_else(|| self.progress.local_roster());
+        let (f, width) = (&self.fonts.body, text_area().w);
+        let mut rows = ui::rows(f, tr("DETECTIVE ROSTER", "LISTA DE DETECTIVES"), ui::YELLOW, width);
+        if !online {
+            rows.extend(ui::rows(
+                f,
+                tr("(This device only: no answer from the bureau.)", "(Solo este equipo: la agencia no responde.)"),
+                ui::GREY,
+                width,
+            ));
+        }
+        rows.push(Row::gap());
+        let me = progress::key(&self.name);
+        for d in &list {
+            let mine = me.is_some() && progress::key(&d.name) == me;
+            let mut name: Vec<char> = d.name.chars().collect();
+            if let Some(first) = name.first_mut() {
+                *first = first.to_uppercase().next().unwrap_or(*first);
+            }
+            let name: String = name.into_iter().collect();
+            rows.extend(ui::rows(f, &name, if mine { ui::YELLOW } else { ui::WHITE }, width));
+            let rank = RANKS[rank_for(d.arrests)].label();
+            let arrests = tr(format!("  {rank}, {} arrests", d.arrests), format!("  {rank}, {} arrestos", d.arrests));
+            rows.extend(ui::rows(f, &arrests, ui::GREY, width));
+        }
+        if list.is_empty() {
+            rows.extend(ui::rows(f, tr("Nobody on file yet.", "Todavía no hay nadie."), ui::GREY, width));
+        }
+        self.panel = Panel::Roster { pager: Pager::new(rows), from_hq, online: Some(online), asked: Instant::now() };
+    }
+
+    /// Suspect `who`'s file: the photo in the picture frame, the facts in the panel.
+    fn dossier(&mut self, who: usize) {
+        let s = &self.data.suspects[who];
+        let (f, width) = (&self.fonts.body, text_area().w);
+        let mut rows = ui::rows(f, &s.name.to_uppercase(), ui::YELLOW, width);
+        let mut facts = vec![(tr("Sex", "Sexo").to_string(), sex_shown(&s.sex).to_string())];
+        for t in &self.data.traits {
+            facts.push((t.label().to_string(), s.shown(t).to_string()));
+        }
+        if let Some(bio) = &s.bio {
+            facts.push((tr("Notes", "Notas").to_string(), bio.get().to_string()));
+        }
+        for (label, value) in facts {
+            let mut lines = ui::rows(f, &format!("{label}: {value}"), ui::WHITE, width);
+            if let Some(first) = lines.first_mut() {
+                first.speaker = (label.chars().count() + 1).min(first.text.chars().count());
+            }
+            rows.extend(lines);
+        }
+        if let Some(said) = &s.catchphrase {
+            rows.extend(ui::rows(f, &format!("\u{201c}{said}\u{201d}"), ui::LIME, width));
+        }
+        let n = self.data.suspects.len();
+        rows.extend(ui::rows(
+            f,
+            &tr(format!("File {} of {n}: tap for the next.", who + 1), format!("Ficha {} de {n}: tocá para la siguiente.", who + 1)),
+            ui::GREY,
+            width,
+        ));
+        self.panel = Panel::Dossier { who, pager: Pager::new(rows) };
     }
 
     fn button(&mut self, b: Button) {
@@ -365,6 +529,13 @@ impl App {
     /// Shows what just happened; if the case ended with it, counts an arrest
     /// and says what it means for the detective's rank.
     fn tell(&mut self, mut lines: Vec<Line>) {
+        // Everything said goes to the serial monitor too, to look back on.
+        for line in &lines {
+            match &line.speaker {
+                Some(who) => log::info!("[{:?}] {who}: {}", line.tone, line.text),
+                None => log::info!("[{:?}] {}", line.tone, line.text),
+            }
+        }
         let game = self.game.as_ref().expect("a case");
         let mut then = Then::Stay;
         if game.over {
@@ -441,29 +612,48 @@ impl App {
         ui::frame(cv, PICTURE, ui::WHITE);
         let p = PICTURE.inner();
         let Some(game) = &self.game else {
-            // Headquarters: the title, the agency, and the name as it's typed.
+            // Headquarters: the title at the top; the roster's button at the
+            // bottom, the name as it's typed above it and the prompt above
+            // that; and the agency in between, if there's room.
             let f = &self.fonts;
+            let width = p.w - 2 * PAD;
+            let b = hq_roster_button();
+            ui::frame(cv, b, if self.pressed == Some(Target::Roster) { ui::YELLOW } else { ui::WHITE });
+            let label = tr("DETECTIVE ROSTER", "LISTA DE DETECTIVES");
+            f.label.draw(
+                cv,
+                b.x + (b.w - f.label.width(label)) / 2,
+                b.y + (b.h - f.label.line_height()) / 2 + f.label.ascent(),
+                label,
+                ui::WHITE,
+            );
+            let name_top = b.y - 6 - f.heading.line_height();
+            f.heading.draw(cv, p.x + PAD, name_top + f.heading.ascent(), &format!("{}_", self.name), ui::CYAN);
+            let prompt = f.body.wrap(tr("Detective at keyboard, please identify yourself:", "Detective al teclado, identificate:"), width);
+            let prompt_top = name_top - 2 - prompt.len() as i32 * f.body.line_height();
+            for (k, line) in prompt.iter().enumerate() {
+                f.body.draw(cv, p.x + PAD, prompt_top + k as i32 * f.body.line_height() + f.body.ascent(), line, ui::WHITE);
+            }
             let mut y = p.y + PAD;
-            for line in f.heading.wrap(game_title(), p.w - 2 * PAD) {
+            for line in f.heading.wrap(game_title(), width) {
                 f.heading.draw(cv, p.x + PAD, y + f.heading.ascent(), &line, ui::YELLOW);
                 y += f.heading.line_height();
             }
-            y += 4;
-            for line in f.body.wrap(&agency().to_uppercase(), p.w - 2 * PAD) {
-                f.body.draw(cv, p.x + PAD, y + f.body.ascent(), &line, ui::GREY);
-                y += f.body.line_height();
+            let agency = f.body.wrap(&agency().to_uppercase(), width);
+            if y + 2 + agency.len() as i32 * f.body.line_height() <= prompt_top - 4 {
+                for (k, line) in agency.iter().enumerate() {
+                    f.body.draw(cv, p.x + PAD, y + 2 + k as i32 * f.body.line_height() + f.body.ascent(), line, ui::GREY);
+                }
             }
-            y += 10;
-            for line in
-                f.body.wrap(tr("Detective at keyboard, please identify yourself:", "Detective al teclado, identificate:"), p.w - 2 * PAD)
-            {
-                f.body.draw(cv, p.x + PAD, y + f.body.ascent(), &line, ui::WHITE);
-                y += f.body.line_height();
-            }
-            y += 6;
-            f.heading.draw(cv, p.x + PAD, y + f.heading.ascent(), &format!("{}_", self.name), ui::CYAN);
             return;
         };
+        if let Panel::Dossier { who, .. } = &self.panel {
+            // The photo at double size nearly fills the frame, as on the original's sheet.
+            cv.rect(p.x, p.y, p.w, p.h, ui::BLACK);
+            if sprites::photo(cv, &self.data.suspects[*who].name, p.x + (p.w - 132) / 2, p.y + (p.h - 192) / 2, 2) {
+                return;
+            }
+        }
         let key = (game.here, TimeOfDay::at(hour_of_day(game.t)));
         if self.postcard.as_ref().is_none_or(|(k, _)| *k != key) {
             let country = game.country(game.here);
@@ -486,6 +676,14 @@ impl App {
             Panel::Name => self.draw_keyboard(cv),
             Panel::Story { pager, .. } | Panel::Notes(pager) => pager.draw(cv, &f.body, area),
             Panel::Scene(scene) => scene.stages[0].draw(cv, f, scene_area(), scene.started.elapsed().as_secs_f64()),
+            Panel::Roster { pager, .. } | Panel::Dossier { pager, .. } => pager.draw(cv, &f.body, area),
+            Panel::Checking(_) => {
+                for (k, line) in
+                    f.body.wrap(tr("Checking the bureau's files…", "Revisando los archivos de la agencia…"), area.w).iter().enumerate()
+                {
+                    f.body.draw(cv, area.x, area.y + k as i32 * f.body.line_height() + f.body.ascent(), line, ui::GREY);
+                }
+            }
             Panel::Places(places) => {
                 let game = self.game.as_ref().expect("a case");
                 let visited = game.visited_here();
@@ -514,6 +712,19 @@ impl App {
                     .collect();
                 rows.push((tr("COMPUTE", "CALCULAR").to_string(), ui::YELLOW));
                 self.draw_list(cv, tr("Crime computer", "Computadora"), &rows);
+                // The last row, split: the files on the left, the roster on the right.
+                let y = list_top(f) + rows.len() as i32 * LIST_ROW;
+                let half = area.w / 2;
+                for (k, (label, target)) in
+                    [(tr("FILES", "FICHAS"), Target::Files), (tr("ROSTER", "LISTA"), Target::Roster)].into_iter().enumerate()
+                {
+                    let x = area.x + k as i32 * half;
+                    if self.pressed == Some(target) {
+                        cv.rect(x, y, half - 2, LIST_ROW - 2, ui::BLUE);
+                    }
+                    cv.rect(x, y + LIST_ROW - 2, half - 2, 1, ui::DARK);
+                    f.body.draw(cv, x + 1, y + (LIST_ROW - f.body.line_height()) / 2 + f.body.ascent(), label, ui::CYAN);
+                }
             }
         }
     }
@@ -561,6 +772,12 @@ impl App {
 /// characters stand on its bottom edge.
 fn scene_area() -> Rect {
     TEXT.inner()
+}
+
+/// The roster's button at headquarters, at the bottom of the picture frame.
+fn hq_roster_button() -> Rect {
+    let p = PICTURE.inner();
+    rect(p.x + PAD, p.y + p.h - 30, p.w - 2 * PAD, 26)
 }
 
 /// Where the text panel's text goes.

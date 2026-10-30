@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     // A check should be heard whatever the game was last set to.
     sound.set(true);
 
-    let all: [(&str, Notes); 17] = [
+    let all: [(&str, Notes); 18] = [
         ("scale, C5 to C8", SCALE),
         ("key", sound::KEY),
         ("tick", sound::TICK),
@@ -59,7 +59,8 @@ fn main() -> anyhow::Result<()> {
         ("knife", tunes::DANGER_KNIFE),
         ("pistol", tunes::DANGER_GUN),
         ("crime computer", tunes::COMPUTING),
-        ("flight", tunes::TRAVELLING),
+        ("take-off", sound::SHWOOM),
+        ("flight tune (not used)", tunes::TRAVELLING),
         ("chase", tunes::CHASE),
         ("captured", tunes::CAPTURED),
         ("got away", tunes::DISAPPOINT),

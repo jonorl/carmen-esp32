@@ -20,6 +20,10 @@ anyhow = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 mipidsi = "0.10"
 embedded-graphics-core = "0.4"
+# HTTP requests to the bureau's server.
+embedded-svc = { version = "0.29", default-features = false, features = ["std"] }
+# WiFi settings from cfg.toml (kept out of git), built in.
+toml-cfg = "0.2"
 
 [build-dependencies]
 embuild = "0.33"

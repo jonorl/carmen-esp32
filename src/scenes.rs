@@ -79,7 +79,8 @@ impl Stage {
                 vec![(HENCHMAN_TUNE_AT, [tunes::HENCHMAN_STRIDE, tunes::HENCHMAN_SNEAK, tunes::HENCHMAN_POPUP][*kind])]
             }
             Stage::Danger(kind) => vec![(DANGER_TUNE_AT[*kind], [tunes::DANGER_AXE, tunes::DANGER_KNIFE, tunes::DANGER_GUN][*kind])],
-            Stage::Fly(_) => vec![(0.0, tunes::TRAVELLING)],
+            // A short sweep: the original's flight tune was too much on the piezo.
+            Stage::Fly(_) => vec![(0.0, sound::SHWOOM)],
             Stage::Compute => vec![(0.0, tunes::COMPUTING)],
             Stage::Chase { .. } => vec![(0.0, tunes::CHASE)],
             Stage::March { caught: true } => vec![(0.0, sound::FOOTSTEPS)],

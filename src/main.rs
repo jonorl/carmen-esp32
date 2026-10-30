@@ -1,11 +1,12 @@
 //! Where in the World? on an ESP32-S3 with a 320x240 ILI9341 touch screen:
-//! sets up the screen, the touch panel, the piezo and flash, loads the data,
+//! sets up the screen, the touch panel, the piezo, flash and WiFi, loads the data,
 //! and hands each touch to the game (`app.rs`), redrawing the screen after
 //! each; while a scene plays, ticks it and redraws only the text panel.
 
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -13,9 +14,10 @@ use esp_idf_svc::hal::spi::config::{Config, DriverConfig};
 use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriver};
 use esp_idf_svc::hal::units::FromValueType;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use log::info;
+use log::{info, warn};
 
 use carmen_esp32::app::{App, Redraw};
+use carmen_esp32::device::net::Net;
 use carmen_esp32::device::sound::Sound;
 use carmen_esp32::device::storage;
 use carmen_esp32::display::{Display, H, W};
@@ -48,7 +50,16 @@ fn main() -> anyhow::Result<()> {
     let mut touch = Touch::new(panel, PinDriver::input(pins.gpio6, Pull::Up)?);
     let calibration = Calibration::MEASURED;
 
-    storage::start(EspDefaultNvsPartition::take()?)?;
+    let nvs = EspDefaultNvsPartition::take()?;
+    storage::start(nvs.clone())?;
+    // WiFi joins in the background; the game starts without waiting for it.
+    let net = match Net::start(p.modem, EspSystemEventLoop::take()?, nvs) {
+        Ok(net) => Some(net),
+        Err(e) => {
+            warn!("no network: {e}");
+            None
+        }
+    };
     let sound = Sound::start(p.ledc.timer0, p.ledc.channel0, pins.gpio4)?;
     lang::start();
     let data = match data::load(None) {
@@ -56,7 +67,7 @@ fn main() -> anyhow::Result<()> {
         Err(data::LoadError::Read(e)) => anyhow::bail!("can't read the data files: {e}"),
         Err(data::LoadError::Invalid(errors)) => anyhow::bail!("the data files have errors:\n{}", errors.join("\n")),
     };
-    let mut app = App::new(data, || unsafe { esp_idf_svc::sys::esp_random() } as u64);
+    let mut app = App::new(data, || unsafe { esp_idf_svc::sys::esp_random() } as u64, net);
     show(&mut display, &mut app)?;
 
     let mut down = false;
@@ -70,6 +81,11 @@ fn main() -> anyhow::Result<()> {
                 Redraw::Panel => show_panel(&mut display, &mut app)?,
                 Redraw::Everything => show(&mut display, &mut app)?,
             }
+        }
+        match app.poll() {
+            Redraw::Nothing => {}
+            Redraw::Panel => show_panel(&mut display, &mut app)?,
+            Redraw::Everything => show(&mut display, &mut app)?,
         }
         match touch.raw()? {
             Some(raw) => {

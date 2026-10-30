@@ -175,3 +175,34 @@ pub fn jail(cv: &mut Canvas, panel: Rect, prisoner: Option<bool>) {
     let (w, h) = (126, 121);
     JAIL.draw(cv, w, frame, panel.x + (panel.w - w) / 2, panel.y + 4, h, panel);
 }
+
+include!(concat!(env!("OUT_DIR"), "/photos.rs"));
+
+/// Draws `name`'s dossier photo (`assets/suspects/<photo name>.png`, 66x96)
+/// with its top left at (x, y), each pixel a `scale` square, as it is: black
+/// is black in a photo. Returns false if there's no photo of them.
+pub fn photo(cv: &mut Canvas, name: &str, x: i32, y: i32, scale: i32) -> bool {
+    let Some((_, strip)) = PHOTOS.iter().find(|(stem, _)| *stem == photo_name(name)) else { return false };
+    for row in 0..strip.h as i32 {
+        for col in 0..strip.w as i32 {
+            let i = ((row as u32 * strip.w + col as u32) * 4) as usize;
+            let c = [strip.rgba[i], strip.rgba[i + 1], strip.rgba[i + 2]];
+            cv.rect(x + col * scale, y + row * scale, scale, scale, c);
+        }
+    }
+    true
+}
+
+/// A photo's file name for `name`, as Carmen's `people::photo_name`:
+/// "Jon Orlo" is `jon-orlo`.
+fn photo_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}

@@ -1,0 +1,6 @@
+# Copy to cfg.toml (kept out of git) and fill in. Built into the firmware.
+[carmen-esp32]
+wifi_ssid = ""
+wifi_psk = ""
+# The bureau's server; empty keeps arrests on this device only.
+api_url = "https://carmen-api.jonathan-orlowski.dev"
