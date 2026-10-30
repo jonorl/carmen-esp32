@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     let mut display = Builder::new(ILI9341Rgb565, interface)
         .reset_pin(reset)
         .orientation(Orientation::new().rotate(Rotation::Deg90))
-        .color_order(ColorOrder::Bgr)
+        .color_order(ColorOrder::Rgb)
         .init(&mut Ets)
         .map_err(|e| anyhow::anyhow!("init failed: {e:?}"))?;
     info!("mipidsi set the screen up");

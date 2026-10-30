@@ -9,8 +9,13 @@ It's built for an ESP32-S3 DevKitC-1 N16R8 (16 MB flash, 8 MB octal PSRAM)
 with a 2.8" 320x240 ILI9341 SPI screen with an XPT2046 resistive touch panel,
 and a passive piezo (Murata PKM22EPPH4001-B, loudest near 4 kHz).
 
-So far it shows a test pattern, then each country's postcard in turn at each
-time of day, logging how long each takes to paint and send.
+It plays the game, laid out as the original (clock and picture on the left,
+text panel and four buttons on the right): type your name on the on-screen
+keyboard, read the briefing, then investigate, fly, keep notes and fill in
+the crime computer until the arrest, a page of text at a time (tap the panel
+for the next). Tap the clock to switch between English and Spanish. Arrests
+are kept in flash per name, and promote you as in the game. Still to come:
+the original's animations, the printer, the map, sound and the online roster.
 
 ## Wiring
 
@@ -56,9 +61,11 @@ Copied from the game at commit `4e0a45c`, then freed of macroquad:
 - `src/art/pixels.rs`, `scene.rs`, `landmarks.rs`: the postcards
   (`scene::paint` gives a `Canvas`).
 - `src/rules/game.rs`, `data.rs`, `rng.rs`: the rules and data loading.
-  Changed here: `Game::route` is public, for the self-playing check, and one
+  Changed here: `Game::route` is public, for the self-playing check; one
   `rng.choice` call names its type (`::<&str>`), which the `esp` toolchain's
-  newer Rust can't infer.
+  newer Rust can't infer; and the Spanish clock is short for the small
+  screen ("martes, 3 pm" for "martes, 3 de la tarde", and "hasta las 7 am"
+  in the night at a hotel).
 - `src/lang.rs`: English and Spanish. Unchanged: the device has no system
   language, so it starts in English until one is chosen; the choice is saved
   through `src/device/storage.rs` (flash) instead of the game's files.
@@ -97,6 +104,16 @@ the game's own text in both languages: body text in Pixelify Sans at 13 px,
 smoothed (chosen on the screen over 11 and 14 px), across the screen and in
 a half-screen panel; labels at 11 px and headings at 22 px, both the font's
 own pixels; and VT323 at 25 px for the printer.
+
+`cargo run --release --bin postcards` (`src/bin/postcards.rs`) shows a
+test pattern, then every country's postcard in turn at each time of day,
+logging how long each takes to paint and send.
+
+`cargo run --release --bin layout` (`src/bin/layout.rs`) mocks two ways to
+lay the game out on 320x240 with real content (Lima's postcard, the clock, a
+witness, the four buttons): A as the original, picture left and text right,
+and B stacked. Tap the screen to go from one to the next, in English then
+Spanish.
 
 `cargo run --release --bin touch` (`src/bin/touch.rs`) tests the touch panel
 (`src/touch.rs`): tap the three crosshairs to calibrate it, then draw with a

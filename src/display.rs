@@ -1,4 +1,4 @@
-//! The ILI9341 screen, 320x240 in landscape, through the `mipidsi` driver.
+//! The ILI9341 screen, 320x240 in landscape, RGB, through the `mipidsi` driver.
 //! Our own driver (set-up commands sent by hand) drew corrupted pictures on
 //! this module, while `mipidsi` drew it right with the same wiring (see
 //! `src/bin/screen.rs`), so the game draws through it.
@@ -41,7 +41,8 @@ impl<'d> Display<'d> {
         let buffer = Box::leak(vec![0; BUFFER].into_boxed_slice());
         let panel = Builder::new(ILI9341Rgb565, SpiInterface::new(spi, dc, buffer))
             .orientation(Orientation::new().rotate(Rotation::Deg90))
-            .color_order(ColorOrder::Bgr)
+            // RGB: with BGR, the layout mock's dark blue came out dark red.
+            .color_order(ColorOrder::Rgb)
             .init(&mut Ets)
             .map_err(|e| anyhow::anyhow!("screen set-up failed: {e:?}"))?;
         Ok(Display { panel, _reset: reset })

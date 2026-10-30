@@ -264,7 +264,8 @@ pub fn fill(template: &str, pronoun: &str, value: Option<&str>) -> String {
     capitalise(&out)
 }
 
-/// In the original's style: "Monday, 9 a.m.", or "lunes, 9 de la mañana".
+/// In the original's style: "Monday, 9 a.m.", or "lunes, 9 am" (short, for
+/// the small screen; the game says "9 de la mañana").
 pub fn clock_text(t: i64) -> String {
     let day = (START_HOUR + t).div_euclid(24);
     let d = day.rem_euclid(7) as usize;
@@ -283,10 +284,8 @@ pub fn clock_text(t: i64) -> String {
             let time = match hour_of_day(t) {
                 0 => "medianoche".to_string(),
                 12 => "mediodía".to_string(),
-                h @ 1..6 => format!("{h} de la madrugada"),
-                h @ 6..12 => format!("{h} de la mañana"),
-                h @ 13..20 => format!("{} de la tarde", h - 12),
-                h => format!("{} de la noche", h - 12),
+                h if h < 12 => format!("{h} am"),
+                h => format!("{} pm", h - 12),
             };
             format!("{}{}, {time}", if next { "próximo " } else { "" }, DAYS_ES[d])
         }
@@ -779,7 +778,7 @@ impl Game {
                     Tone::Dim,
                     tr(
                         "It's late. You check into a hotel and sleep until 7 a.m.",
-                        "Es tarde. Te registrás en un hotel y dormís hasta las 7 de la mañana.",
+                        "Es tarde. Te registrás en un hotel y dormís hasta las 7 am.",
                     ),
                 );
             }
@@ -1213,13 +1212,13 @@ mod tests {
     #[test]
     fn the_clock_in_spanish() {
         crate::lang::set(Lang::Es);
-        assert_eq!(clock_text(0), "lunes, 9 de la mañana");
+        assert_eq!(clock_text(0), "lunes, 9 am");
         assert_eq!(clock_text(3), "lunes, mediodía");
-        assert_eq!(clock_text(8), "lunes, 5 de la tarde");
-        assert_eq!(clock_text(12), "lunes, 9 de la noche");
+        assert_eq!(clock_text(8), "lunes, 5 pm");
+        assert_eq!(clock_text(12), "lunes, 9 pm");
         assert_eq!(clock_text(15), "martes, medianoche");
-        assert_eq!(clock_text(18), "martes, 3 de la madrugada");
-        assert_eq!(clock_text(24 * 7), "próximo lunes, 9 de la mañana");
+        assert_eq!(clock_text(18), "martes, 3 am");
+        assert_eq!(clock_text(24 * 7), "próximo lunes, 9 am");
         assert_eq!(duration_text(25), "1 día, 1 hora");
         crate::lang::set(Lang::En);
     }

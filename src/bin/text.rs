@@ -28,7 +28,7 @@ const CLUE_EN: &str = "Hotel concierge: “He had brown hair. He wanted to climb
 const CLUE_ES: &str =
     "Boletera: “Preguntó cómo dormir en una yurta junto al lago Song-Kul. Dijo que no hay nada como moverse en monopatín.”";
 const FLASH_ES: &str = "¡URGENTE! Robo en Port Louis, Mauricio: ¡el último huevo de dodo!";
-const BRIEF_ES: &str = "Tu misión, Detective Jon: seguí el rastro, conseguí una orden de arresto en la computadora y hacé el arresto antes del próximo martes, 9 de la mañana.";
+const BRIEF_ES: &str = "Tu misión, Detective Jon: seguí el rastro, conseguí una orden de arresto en la computadora y hacé el arresto antes del próximo martes, 9 am.";
 const CHARS: &str = "ÁÉÍÓÚÜÑ áéíóúüñ ¿¡ “” ‘’ – — … € ₹ 0123456789";
 const PRINTER: &str = "Volás de Port Louis a Lima (18 horas).";
 

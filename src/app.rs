@@ -1,0 +1,506 @@
+//! The game on the screen: headquarters (the name, typed on an on-screen
+//! keyboard), the briefing, the case (the four buttons: notes, flights,
+//! places to investigate, the crime computer), the ending, and the next case.
+//!
+//! Input is a press and a release: `press` highlights what's under the
+//! finger, `release` acts on it, and `draw` paints the whole screen from the
+//! state, so the screen only changes on a touch.
+
+use std::rc::Rc;
+
+use crate::art::pixels::{Canvas, Rgb};
+use crate::art::scene::{self, TimeOfDay};
+use crate::device::progress::{MAX_NAME, Progress};
+use crate::display::{H, W};
+use crate::lang::{self, Lang, lang, tr};
+use crate::rules::data::Data;
+use crate::rules::game::{Game, Line, RANKS, Tone, agency, clock_text, game_title, hour_of_day, promotion_news, rank_for};
+use crate::rules::game::{PLACES, same};
+use crate::rules::rng::Rng;
+use crate::ui::{self, BUTTON_ORDER, BUTTONS, Button, CLOCK, Fonts, PAD, PICTURE, Pager, Rect, Row, TEXT, rect};
+
+/// Something the finger can press.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Target {
+    Button(Button),
+    /// A row of a list in the text panel: a place, a flight, a crime computer field.
+    Row(usize),
+    /// A key of the on-screen keyboard.
+    Key(usize),
+    /// The text panel itself, to turn the page.
+    Panel,
+    /// The clock box: switches language.
+    Clock,
+}
+
+enum Panel {
+    /// Headquarters: the keyboard for the detective's name.
+    Name,
+    /// Text to read, a page at a time; then `then`.
+    Story { pager: Pager, then: Then },
+    /// The three places to investigate here (indices into `PLACES`).
+    Places([usize; 3]),
+    /// Where the flights from here go.
+    Flights(Vec<usize>),
+    /// The crime computer's fields, and its compute row.
+    Crime,
+    /// The case notes: deadline, warrant and everything said so far.
+    Notes(Pager),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Then {
+    /// Stay: the buttons say what next.
+    Stay,
+    /// The briefing's over: on to the first city.
+    Arrive,
+    /// The case is over: back to headquarters for another.
+    NextCase,
+}
+
+/// The keyboard: letters, Ñ, delete, the language and OK, six to a row.
+const KEYS: [&str; 30] = [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "Ñ", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "⌫", "LANG", "OK",
+];
+const KEY_COLUMNS: i32 = 6;
+
+/// Rows of a list in the text panel: a heading, then rows this tall.
+const LIST_ROW: i32 = 22;
+
+pub struct App {
+    data: Rc<Data>,
+    fonts: Fonts,
+    progress: Progress,
+    seed: fn() -> u64,
+    name: String,
+    game: Option<Game>,
+    panel: Panel,
+    pressed: Option<Target>,
+    /// The postcard on show, painted once per city and time of day.
+    postcard: Option<((usize, TimeOfDay), Canvas)>,
+}
+
+impl App {
+    /// Starts at headquarters. `seed` gives each new case its randomness.
+    pub fn new(data: Rc<Data>, seed: fn() -> u64) -> App {
+        App {
+            data,
+            fonts: Fonts::new(),
+            progress: Progress::load(),
+            seed,
+            name: String::new(),
+            game: None,
+            panel: Panel::Name,
+            pressed: None,
+            postcard: None,
+        }
+    }
+
+    // ------------------------------------------------------------ input
+
+    /// The finger went down at (x, y); true if the screen should change.
+    pub fn press(&mut self, x: i32, y: i32) -> bool {
+        self.pressed = self.target_at(x, y);
+        self.pressed.is_some()
+    }
+
+    /// The finger came up: act on what it pressed. True if the screen should change.
+    pub fn release(&mut self) -> bool {
+        let Some(target) = self.pressed.take() else { return false };
+        self.act(target);
+        true
+    }
+
+    fn buttons_on(&self) -> bool {
+        self.game.as_ref().is_some_and(|g| !g.over) && !matches!(self.panel, Panel::Name | Panel::Story { then: Then::Arrive, .. })
+    }
+
+    fn target_at(&self, x: i32, y: i32) -> Option<Target> {
+        if CLOCK.contains(x, y) {
+            return Some(Target::Clock);
+        }
+        if let Some(i) = BUTTONS.iter().position(|b| b.contains(x, y)) {
+            return self.buttons_on().then_some(Target::Button(BUTTON_ORDER[i]));
+        }
+        if !TEXT.contains(x, y) {
+            return None;
+        }
+        let area = text_area();
+        match &self.panel {
+            Panel::Name => {
+                let (kx, ky) = ((x - area.x) / key_size().0, (y - keyboard_top()) / key_size().1);
+                let k = (ky * KEY_COLUMNS + kx) as usize;
+                (y >= keyboard_top() && kx < KEY_COLUMNS && k < KEYS.len()).then_some(Target::Key(k))
+            }
+            Panel::Story { .. } | Panel::Notes(_) => Some(Target::Panel),
+            Panel::Places(_) => self.list_row(y, 3),
+            Panel::Flights(dests) => self.list_row(y, dests.len()),
+            Panel::Crime => self.list_row(y, self.game.as_ref().map_or(0, |g| g.warrant.len() + 1)),
+        }
+    }
+
+    /// Which of `n` list rows is at height `y`.
+    fn list_row(&self, y: i32, n: usize) -> Option<Target> {
+        let top = list_top(&self.fonts);
+        let row = (y - top).div_euclid(LIST_ROW);
+        (y >= top && (row as usize) < n).then_some(Target::Row(row as usize))
+    }
+
+    fn act(&mut self, target: Target) {
+        match target {
+            Target::Clock => {
+                lang::choose(if lang() == Lang::En { Lang::Es } else { Lang::En });
+            }
+            Target::Key(k) => self.key(k),
+            Target::Panel => self.turn_page(),
+            Target::Button(b) => self.button(b),
+            Target::Row(i) => self.row(i),
+        }
+    }
+
+    fn key(&mut self, k: usize) {
+        match KEYS[k] {
+            "⌫" => {
+                self.name.pop();
+            }
+            "LANG" => lang::choose(if lang() == Lang::En { Lang::Es } else { Lang::En }),
+            "OK" => {
+                if !self.name.trim().is_empty() {
+                    self.new_case();
+                }
+            }
+            letter => {
+                if self.name.chars().count() < MAX_NAME {
+                    // Typed in capitals, kept as a name: Jon, not JON.
+                    let c = if self.name.is_empty() { letter.to_string() } else { letter.to_lowercase() };
+                    self.name.push_str(&c);
+                }
+            }
+        }
+    }
+
+    fn turn_page(&mut self) {
+        let (f, area) = (&self.fonts.body, text_area());
+        match &mut self.panel {
+            Panel::Story { pager, then } => {
+                if pager.turn(f, area) {
+                    return;
+                }
+                match *then {
+                    Then::Stay => {}
+                    Then::Arrive => self.arrive(),
+                    Then::NextCase => self.new_case(),
+                }
+            }
+            Panel::Notes(pager) => {
+                if !pager.turn(f, area) {
+                    pager.page = 0;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn button(&mut self, b: Button) {
+        let Some(game) = self.game.as_mut() else { return };
+        self.panel = match b {
+            Button::Notes => {
+                let mut pager = Pager::new(notes_rows(&self.fonts, game));
+                // Open on the newest page; a tap goes on round from the oldest.
+                pager.page = pager.pages(&self.fonts.body, text_area()) - 1;
+                Panel::Notes(pager)
+            }
+            Button::Depart => Panel::Flights(game.destinations()),
+            Button::Investigate => Panel::Places(game.places_in(game.here)),
+            Button::Crime => Panel::Crime,
+        };
+    }
+
+    fn row(&mut self, i: usize) {
+        let Some(game) = self.game.as_mut() else { return };
+        let before = game.log.len();
+        let mut extra = Vec::new();
+        match &self.panel {
+            Panel::Places(_) => {
+                game.investigate(i);
+                // The front end's own lines, as the desktop shows them over its animations.
+                if let Some((_, first)) = game.henchman.take()
+                    && first
+                {
+                    extra.push(said(
+                        Tone::Warn,
+                        tr("A S.U.R.M.E. henchman! You must be on the right track.", "¡Un secuaz de S.U.R.M.E.! Vas por buen camino."),
+                    ));
+                }
+                if game.danger.take().is_some() {
+                    extra.push(said(Tone::Bad, tr("Look out! That was close.", "¡Cuidado! Estuvo cerca.")));
+                }
+            }
+            Panel::Flights(dests) => game.travel(dests[i]),
+            Panel::Crime => {
+                if i == game.warrant.len() {
+                    game.compute_warrant();
+                } else {
+                    let fields = game.warrant_fields();
+                    let (_, _, values) = &fields[i];
+                    let now = game.warrant[i].1.clone();
+                    // Each tap steps to the next value, and from the last back to unknown.
+                    let next = match now.and_then(|v| values.iter().position(|x| same(x, &v))) {
+                        None => values.first().cloned(),
+                        Some(p) => values.get(p + 1).cloned(),
+                    };
+                    game.warrant[i].1 = next;
+                    return;
+                }
+            }
+            _ => return,
+        }
+        let mut lines = extra;
+        lines.extend(game.log[before..].iter().cloned());
+        self.tell(lines);
+    }
+
+    // ------------------------------------------------------------ the story
+
+    /// Shows what just happened; if the case ended with it, counts an arrest
+    /// and says what it means for the detective's rank.
+    fn tell(&mut self, mut lines: Vec<Line>) {
+        let game = self.game.as_ref().expect("a case");
+        let mut then = Then::Stay;
+        if game.over {
+            then = Then::NextCase;
+            if game.won {
+                let arrests = self.progress.add_arrest(&self.name);
+                lines.push(said(Tone::Plain, ""));
+                lines.push(said(Tone::Good, &promotion_news(arrests)));
+            }
+        }
+        self.panel = Panel::Story { pager: Pager::new(ui::log_rows(&self.fonts.body, &lines, text_area().w)), then };
+    }
+
+    /// A new case for the detective at their rank, with the welcome and briefing.
+    fn new_case(&mut self) {
+        let arrests = self.progress.arrests(&self.name);
+        let rank = RANKS[rank_for(arrests)];
+        let mut game = Game::new(Rc::clone(&self.data), rank, Rng::new((self.seed)()), self.name.trim());
+        let welcome = if arrests == 0 && self.game.is_none() {
+            tr(format!("Welcome, {}.", self.name), format!("Te damos la bienvenida, {}.", self.name))
+        } else {
+            tr(format!("Welcome back, {}.", self.name), format!("Hola de nuevo, {}.", self.name))
+        };
+        let mut lines = vec![
+            said(Tone::Plain, &welcome),
+            said(Tone::Plain, &tr(format!("Your rank: {}.", rank.label()), format!("Tu rango: {}.", rank.label()))),
+            said(Tone::Plain, ""),
+        ];
+        lines.extend(game.briefing());
+        self.game = Some(game);
+        self.panel = Panel::Story { pager: Pager::new(ui::log_rows(&self.fonts.body, &lines, text_area().w)), then: Then::Arrive };
+    }
+
+    /// The first city: its name and what it's like.
+    fn arrive(&mut self) {
+        let game = self.game.as_ref().expect("a case");
+        let country = game.country(game.here);
+        let mut lines = vec![said(Tone::Heading, &country.label().to_uppercase())];
+        if let Some(about) = &country.about {
+            lines.push(said(Tone::Plain, about.get()));
+        }
+        self.panel = Panel::Story { pager: Pager::new(ui::log_rows(&self.fonts.body, &lines, text_area().w)), then: Then::Stay };
+    }
+
+    // ------------------------------------------------------------ drawing
+
+    pub fn draw(&mut self) -> Canvas {
+        let mut cv = Canvas::new(W as i32, H as i32);
+        self.draw_clock(&mut cv);
+        self.draw_picture(&mut cv);
+        self.draw_panel(&mut cv);
+        let on = self.buttons_on();
+        for (i, &b) in BUTTON_ORDER.iter().enumerate() {
+            ui::button(&mut cv, &self.fonts, b, BUTTONS[i], self.pressed == Some(Target::Button(b)), on);
+        }
+        cv
+    }
+
+    fn draw_clock(&self, cv: &mut Canvas) {
+        ui::frame(cv, CLOCK, if self.pressed == Some(Target::Clock) { ui::YELLOW } else { ui::WHITE });
+        let c = CLOCK.inner();
+        let f = &self.fonts.body;
+        let text = match &self.game {
+            Some(g) => clock_text(g.t),
+            None => tr("Headquarters", "Cuartel general").to_string(),
+        };
+        let text = f.wrap(&text, c.w - 2 * PAD).into_iter().next().unwrap_or_default();
+        f.draw(cv, c.x + PAD, c.y + (c.h - f.line_height()) / 2 + f.ascent(), &text, ui::WHITE);
+        let tag = if lang() == Lang::En { "EN" } else { "ES" };
+        self.fonts.label.draw(cv, c.x + c.w - self.fonts.label.width(tag) - 1, c.y + self.fonts.label.ascent(), tag, ui::GREY);
+    }
+
+    fn draw_picture(&mut self, cv: &mut Canvas) {
+        ui::frame(cv, PICTURE, ui::WHITE);
+        let p = PICTURE.inner();
+        let Some(game) = &self.game else {
+            // Headquarters: the title, the agency, and the name as it's typed.
+            let f = &self.fonts;
+            let mut y = p.y + PAD;
+            for line in f.heading.wrap(game_title(), p.w - 2 * PAD) {
+                f.heading.draw(cv, p.x + PAD, y + f.heading.ascent(), &line, ui::YELLOW);
+                y += f.heading.line_height();
+            }
+            y += 4;
+            for line in f.body.wrap(&agency().to_uppercase(), p.w - 2 * PAD) {
+                f.body.draw(cv, p.x + PAD, y + f.body.ascent(), &line, ui::GREY);
+                y += f.body.line_height();
+            }
+            y += 10;
+            for line in
+                f.body.wrap(tr("Detective at keyboard, please identify yourself:", "Detective al teclado, identificate:"), p.w - 2 * PAD)
+            {
+                f.body.draw(cv, p.x + PAD, y + f.body.ascent(), &line, ui::WHITE);
+                y += f.body.line_height();
+            }
+            y += 6;
+            f.heading.draw(cv, p.x + PAD, y + f.heading.ascent(), &format!("{}_", self.name), ui::CYAN);
+            return;
+        };
+        let key = (game.here, TimeOfDay::at(hour_of_day(game.t)));
+        if self.postcard.as_ref().is_none_or(|(k, _)| *k != key) {
+            let country = game.country(game.here);
+            self.postcard = Some((key, scene::paint(&country.country, country.lat, key.1, p.w, p.h)));
+        }
+        if let Some((_, card)) = &self.postcard {
+            for (i, &px) in card.pixels().iter().enumerate() {
+                cv.set(p.x + i as i32 % p.w, p.y + i as i32 / p.w, px);
+            }
+        }
+    }
+
+    fn draw_panel(&self, cv: &mut Canvas) {
+        ui::frame(cv, TEXT, ui::WHITE);
+        let inner = TEXT.inner();
+        cv.rect(inner.x, inner.y, inner.w, inner.h, ui::NAVY);
+        let area = text_area();
+        let f = &self.fonts;
+        match &self.panel {
+            Panel::Name => self.draw_keyboard(cv),
+            Panel::Story { pager, .. } | Panel::Notes(pager) => pager.draw(cv, &f.body, area),
+            Panel::Places(places) => {
+                let game = self.game.as_ref().expect("a case");
+                let visited = game.visited_here();
+                let rows: Vec<(String, Rgb)> = places
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &p)| (PLACES[p].label().to_string(), if visited.contains(&i) { ui::GREY } else { ui::WHITE }))
+                    .collect();
+                self.draw_list(cv, tr("Where to investigate?", "¿Dónde investigar?"), &rows);
+            }
+            Panel::Flights(dests) => {
+                let game = self.game.as_ref().expect("a case");
+                let rows: Vec<(String, Rgb)> = dests.iter().map(|&d| (game.country(d).label(), ui::WHITE)).collect();
+                self.draw_list(cv, tr("Fly to:", "Volar a:"), &rows);
+            }
+            Panel::Crime => {
+                let game = self.game.as_ref().expect("a case");
+                let mut rows: Vec<(String, Rgb)> = game
+                    .warrant_fields()
+                    .iter()
+                    .zip(&game.warrant)
+                    .map(|((key, label, _), (_, value))| match value {
+                        Some(v) => (format!("{label}: {}", game.shown(key, v)), ui::WHITE),
+                        None => (format!("{label}: ?"), ui::GREY),
+                    })
+                    .collect();
+                rows.push((tr("COMPUTE", "CALCULAR").to_string(), ui::YELLOW));
+                self.draw_list(cv, tr("Crime computer", "Computadora"), &rows);
+            }
+        }
+    }
+
+    /// A heading, then rows to tap, the pressed one highlighted.
+    fn draw_list(&self, cv: &mut Canvas, heading: &str, rows: &[(String, Rgb)]) {
+        let (f, area) = (&self.fonts.body, text_area());
+        f.draw(cv, area.x, area.y + f.ascent(), heading, ui::YELLOW);
+        let top = list_top(&self.fonts);
+        for (i, (text, colour)) in rows.iter().enumerate() {
+            let y = top + i as i32 * LIST_ROW;
+            if self.pressed == Some(Target::Row(i)) {
+                cv.rect(area.x - 1, y, area.w + 2, LIST_ROW - 2, ui::BLUE);
+            }
+            cv.rect(area.x, y + LIST_ROW - 2, area.w, 1, ui::DARK);
+            // A long name is cut short to keep each row one line.
+            let text = f.wrap(text, area.w - 2).into_iter().next().unwrap_or_default();
+            f.draw(cv, area.x + 1, y + (LIST_ROW - f.line_height()) / 2 + f.ascent(), &text, *colour);
+        }
+    }
+
+    fn draw_keyboard(&self, cv: &mut Canvas) {
+        let (f, area) = (&self.fonts, text_area());
+        let (kw, kh) = key_size();
+        let top = keyboard_top();
+        f.body.draw(cv, area.x, area.y + f.body.ascent(), tr("Your name:", "Tu nombre:"), ui::YELLOW);
+        for (k, &label) in KEYS.iter().enumerate() {
+            let (col, row) = (k as i32 % KEY_COLUMNS, k as i32 / KEY_COLUMNS);
+            let key = rect(area.x + col * kw, top + row * kh, kw - 2, kh - 2);
+            let pressed = self.pressed == Some(Target::Key(k));
+            cv.rect(key.x, key.y, key.w, key.h, if pressed { ui::YELLOW } else { ui::BLUE });
+            let label = match label {
+                "LANG" => tr("ES", "EN"),
+                "⌫" => "<",
+                l => l,
+            };
+            let font = if label.chars().count() > 1 { &f.label } else { &f.body };
+            let ink = if pressed { ui::NAVY } else { ui::WHITE };
+            font.draw(cv, key.x + (key.w - font.width(label)) / 2, key.y + (key.h - font.line_height()) / 2 + font.ascent(), label, ink);
+        }
+    }
+}
+
+/// Where the text panel's text goes.
+fn text_area() -> Rect {
+    let i = TEXT.inner();
+    rect(i.x + PAD, i.y + PAD, i.w - 2 * PAD, i.h - 2 * PAD)
+}
+
+fn list_top(f: &Fonts) -> i32 {
+    text_area().y + f.body.line_height() + 4
+}
+
+fn key_size() -> (i32, i32) {
+    let area = text_area();
+    let rows = KEYS.len().div_ceil(KEY_COLUMNS as usize) as i32;
+    (area.w / KEY_COLUMNS, (area.y + area.h - keyboard_top()) / rows)
+}
+
+fn keyboard_top() -> i32 {
+    text_area().y + 20
+}
+
+/// The notes: the deadline, the warrant, then everything said in the case.
+fn notes_rows(f: &Fonts, game: &Game) -> Vec<Row> {
+    let width = text_area().w;
+    let left = (game.deadline - game.t).max(0);
+    let due = clock_text(game.deadline);
+    let mut lines = vec![
+        said(Tone::Heading, tr("CASE NOTES", "NOTAS DEL CASO")),
+        said(
+            if left <= 12 { Tone::Bad } else { Tone::Plain },
+            &tr(format!("Deadline {due} ({left} hours left)"), format!("Vence el {due} ({left} h)")),
+        ),
+        said(
+            Tone::Dim,
+            &match game.warrant_for {
+                Some(s) => tr(format!("Warrant: {}", game.data.suspects[s].name), format!("Orden: {}", game.data.suspects[s].name)),
+                None => tr("Warrant: none", "Orden: ninguna").to_string(),
+            },
+        ),
+        said(Tone::Plain, ""),
+    ];
+    lines.extend(game.log.iter().cloned());
+    ui::log_rows(&f.body, &lines, width)
+}
+
+fn said(tone: Tone, text: &str) -> Line {
+    Line { tone, speaker: None, text: text.to_string() }
+}
