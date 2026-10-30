@@ -63,6 +63,8 @@ Copied from the game at commit `4e0a45c`, then freed of macroquad:
   language, so it starts in English until one is chosen; the choice is saved
   through `src/device/storage.rs` (flash) instead of the game's files.
 - `countries.json`, `suspects.json`
+- `assets/fonts/`: Pixelify Sans, VT323 and Noto Sans (₹ only), already cut
+  down to the characters the game shows, with their SIL OFL licences.
 
 Changes to these in the game don't arrive here by themselves: carry them over
 by hand, and note the new commit here. Their `#[cfg(test)]` tests don't run
@@ -89,6 +91,12 @@ driver of our own drew corrupted pictures where this one drew right, so
 with nothing drawn: it loads and checks the data, then plays a case in English
 and one in Spanish as a careful player would, printing everything the game
 says with timings and free memory. It also counts its starts in flash.
+
+`cargo run --release --bin text` (`src/bin/text.rs`) shows the fonts with
+the game's own text in both languages: body text in Pixelify Sans at 13 px,
+smoothed (chosen on the screen over 11 and 14 px), across the screen and in
+a half-screen panel; labels at 11 px and headings at 22 px, both the font's
+own pixels; and VT323 at 25 px for the printer.
 
 `cargo run --release --bin touch` (`src/bin/touch.rs`) tests the touch panel
 (`src/touch.rs`): tap the three crosshairs to calibrate it, then draw with a

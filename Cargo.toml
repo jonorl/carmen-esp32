@@ -23,6 +23,8 @@ embedded-graphics-core = "0.4"
 
 [build-dependencies]
 embuild = "0.33"
+# Turns the fonts into bitmaps at build time, so nothing is rendered on the device.
+fontdue = "0.9"
 
 # The art is painted on the device, so it needs speed more than size; 16 MB of flash leaves room.
 [profile.release]

@@ -10,9 +10,11 @@ Hardware, wiring and commands are in `README.md`.
 - `src/main.rs`: the demo so far (test pattern, then every postcard in turn, logging paint and send times).
 - `src/display.rs`: the screen through the `mipidsi` crate, landscape (`Rotation::Deg90`), BGR, 40 MHz, no DMA. `blit` and `fill` take `[u8; 3]` colours.
 - `src/touch.rs`: the XPT2046 on the same SPI bus (own chip select, 2 MHz). `Calibration::MEASURED` maps raw readings to screen pixels.
-- `src/art/`, `src/rules/`, `src/lang.rs`, `countries.json`, `suspects.json`: copied from the game (see the README for what was changed in the copies).
+- `src/art/`, `src/rules/`, `src/lang.rs`, `countries.json`, `suspects.json`, `assets/fonts/`: copied from the game (see the README for what was changed in the copies).
+- `build.rs`: links ESP-IDF, and turns `assets/fonts` into bitmaps (`$OUT_DIR/fonts.rs`). Pixelify Sans and VT323 are pixel fonts drawn on grids that don't start at zero (Pixelify: 91-unit cells from x 60, y -12; VT323: 40-unit cells from 0, measured with fontTools), so each glyph is rasterised large and every grid cell lit if covered enough, giving the font's own pixels. Pixelify's acute and grave accents are drawn in half-cell steps and are kept by a lower threshold for ink away from the letter (`MARK_LIT`). Change the sizes there (`PIXEL_FONTS`'s `sizes` and `smooth`).
+- `src/text.rs`: `Font::new(Family, size)` (body text: `PixelifySmooth` 13; labels and headings: `Pixelify` 11 or 22, its own pixels; printer: `Vt323` 25) measures, wraps and draws onto a `Canvas`; Noto Sans stands in for ₹.
 - `src/device/storage.rs`: the game's `storage::read` and `write`, kept in NVS flash; `storage::start` must run first.
-- `src/bin/`: checks, `pins` (wiring), `screen` (mipidsi's test image), `touch` (calibration and drawing), `case` (the rules playing a case, printed to the serial monitor).
+- `src/bin/`: checks, `pins` (wiring), `screen` (mipidsi's test image), `touch` (calibration and drawing), `case` (the rules playing a case, printed to the serial monitor), `text` (the fonts).
 
 ## Learnt on the hardware
 
@@ -26,5 +28,5 @@ Hardware, wiring and commands are in `README.md`.
 ## Commands
 
 - `cargo run --release`: build, flash and monitor the demo.
-- `cargo run --release --bin pins|screen|touch|case`: the checks.
+- `cargo run --release --bin pins|screen|touch|case|text`: the checks.
 - `cargo fmt`: 140 columns (`rustfmt.toml`).

@@ -6,4 +6,5 @@ pub mod device;
 pub mod display;
 pub mod lang;
 pub mod rules;
+pub mod text;
 pub mod touch;
