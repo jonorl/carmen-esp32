@@ -1,0 +1,274 @@
+{
+  "_how_to_edit": [
+    "Replace these placeholder people with your own family and friends.",
+    "Every suspect needs a name, a sex (male or female) and a value for every trait.",
+    "No two people may have the same sex AND the same crime computer traits, or the computer can't tell them apart.",
+    "Values work best as short words that several people share: two people with black hair, two who get around by bicycle, and so on. The crime computer lists them as written.",
+    "Each trait's clues are witness sentences; {value} becomes that person's value. In sentences, {They}/{they}, {Them}/{them} and {Their}/{their} become he/him/his or she/her/her.",
+    "phrases (optional) say how witnesses word a value when it doesn't read well on its own: the computer shows Bald, a witness says he had no hair at all.",
+    "computer: false marks a trait the crime computer doesn't have. Other is one: witnesses may mention it, and it shows in the dossier, but it can't go on a warrant. Write it to follow 'he' or 'she', like 'collects stamps'.",
+    "catchphrase (optional) is what they say when you catch them. bio (optional) shows as Notes in their dossier.",
+    "skin is optional too: light, rosy, olive, tan, brown or dark, for the drawn portrait of anyone without a photo in assets/suspects/. The rest of that portrait (hair, beard, glasses) comes from the words in their traits.",
+    "es holds the Spanish (Argentina). On a trait: its label, witness sentences, \"values\" (each English value as the crime computer shows it in Spanish) and \"phrases\" (how witnesses say it). Spanish sentences use {Él}/{él}, {lo} (lo or la) and {o} (cansad{o}) where words agree with the thief. On a person: their own Spanish for a trait, such as Other, written for their sex.",
+    "After editing, run: cargo run -- --check"
+  ],
+
+  "traits": [
+    {
+      "key": "hobby",
+      "label": "Hobby",
+      "phrases": {
+        "magnets": "playing with magnets"
+      },
+      "clues": [
+        "{They} wouldn't stop talking about {value}.",
+        "{They} asked if there was anywhere nearby for {value}.",
+        "{They} said {they} never missed a weekend of {value}."
+      ],
+      "es": {
+        "label": "Pasatiempo",
+        "values": {
+          "gadgets": "gadgets",
+          "yoga": "yoga",
+          "magnets": "imanes",
+          "watching terrible films": "películas malísimas",
+          "video games": "videojuegos"
+        },
+        "phrases": {
+          "gadgets": "probar gadgets nuevos",
+          "yoga": "hacer yoga",
+          "magnets": "jugar con imanes",
+          "watching terrible films": "ver películas malísimas",
+          "video games": "jugar a los videojuegos"
+        },
+        "clues": [
+          "Me dijo que lo que más le gusta es {value}.",
+          "Preguntó si había algún lugar cerca para {value}.",
+          "Dijo que no hay fin de semana sin {value}."
+        ]
+      }
+    },
+    {
+      "key": "hair",
+      "label": "Hair",
+      "phrases": {
+        "bald": "no hair at all",
+        "black": "black hair",
+        "brown": "brown hair"
+      },
+      "clues": [
+        "{They} had {value}.",
+        "You couldn't miss {them}: {they} had {value}."
+      ],
+      "es": {
+        "label": "Pelo",
+        "values": {
+          "bald": "pelado",
+          "black": "negro",
+          "brown": "castaño"
+        },
+        "phrases": {
+          "bald": "la cabeza pelada",
+          "black": "el pelo negro",
+          "brown": "el pelo castaño"
+        },
+        "clues": [
+          "Tenía {value}.",
+          "Imposible no ver{lo}: tenía {value}."
+        ]
+      }
+    },
+    {
+      "key": "feature",
+      "label": "Feature",
+      "clues": [
+        "I couldn't help noticing {their} {value}.",
+        "One thing I remember about {them}: {their} {value}."
+      ],
+      "es": {
+        "label": "Rasgo",
+        "values": {
+          "glasses": "anteojos",
+          "green eyes": "ojos verdes",
+          "short stature": "baja estatura",
+          "beard": "barba"
+        },
+        "phrases": {
+          "glasses": "sus anteojos",
+          "green eyes": "sus ojos verdes",
+          "short stature": "su baja estatura",
+          "beard": "su barba"
+        },
+        "clues": [
+          "No pude dejar de notar {value}.",
+          "Algo que me acuerdo bien: {value}."
+        ]
+      }
+    },
+    {
+      "key": "vehicle",
+      "label": "Vehicle",
+      "phrases": {
+        "rollerskates": "roller skate"
+      },
+      "clues": [
+        "{They} said nothing beats getting around by {value}.",
+        "How did {they} get here? By {value}, {they} said."
+      ],
+      "es": {
+        "label": "Vehículo",
+        "values": {
+          "bicycle": "bicicleta",
+          "rollerskates": "patines",
+          "scooter": "monopatín",
+          "public transport": "transporte público",
+          "car": "auto"
+        },
+        "clues": [
+          "Dijo que no hay nada como moverse en {value}.",
+          "¿Cómo llegó? En {value}, me dijo."
+        ]
+      }
+    },
+    {
+      "key": "other",
+      "label": "Other",
+      "computer": false,
+      "clues": [
+        "Funny thing about {them}: {they} {value}.",
+        "I'll tell you one more thing: {they} {value}."
+      ],
+      "es": {
+        "label": "Otros",
+        "clues": [
+          "Algo curioso: {value}.",
+          "Te digo una cosa más: {value}."
+        ]
+      }
+    }
+  ],
+
+  "suspects": [
+    {
+      "name": "Jon Orlo",
+      "sex": "male",
+      "hobby": "gadgets",
+      "hair": "bald",
+      "feature": "glasses",
+      "vehicle": "bicycle",
+      "other": "pretends to know some Japanese",
+      "catchphrase": "Omae wa mo, shindeiru!",
+      "es": { "other": "se hace el que sabe algo de japonés" }
+    },
+    {
+      "name": "Rachel Kiernan",
+      "sex": "female",
+      "hobby": "yoga",
+      "hair": "brown",
+      "feature": "green eyes",
+      "vehicle": "bicycle",
+      "other": "can never decide what to order in a restaurant",
+      "catchphrase": "Are we going to a restaurant? If so, I'll order the same thing as you.",
+      "es": { "other": "nunca sabe qué pedir en un restaurante" }
+    },
+    {
+      "name": "Isabela Orlo",
+      "sex": "female",
+      "hobby": "magnets",
+      "hair": "black",
+      "feature": "short stature",
+      "vehicle": "rollerskates",
+      "other": "speaks English and Spanish fluently",
+      "catchphrase": "Look at what Lucas is doing!",
+      "es": { "other": "habla inglés y castellano con fluidez" }
+    },
+    {
+      "name": "Lucas Orlo",
+      "sex": "male",
+      "hobby": "magnets",
+      "hair": "brown",
+      "feature": "green eyes",
+      "vehicle": "scooter",
+      "other": "has big cheeks",
+      "catchphrase": "Where is my Mamiiiiii.",
+      "es": { "other": "tiene unos cachetes enormes" }
+    },
+    {
+      "name": "Erich Orlo",
+      "sex": "male",
+      "hobby": "watching terrible films",
+      "hair": "bald",
+      "feature": "beard",
+      "vehicle": "public transport",
+      "other": "collects Playmobil",
+      "catchphrase": "Es lo que hay.",
+      "es": { "other": "colecciona Playmobil" }
+    },
+    {
+      "name": "Mutti Orlo",
+      "sex": "female",
+      "hobby": "yoga",
+      "hair": "black",
+      "feature": "short stature",
+      "vehicle": "public transport",
+      "other": "has metaphysical magnetic powers",
+      "catchphrase": "Esto se cura con imanes.",
+      "es": { "other": "tiene poderes magnéticos metafísicos" }
+    },
+    {
+      "name": "Pepe Senshu",
+      "sex": "male",
+      "hobby": "video games",
+      "hair": "black",
+      "feature": "glasses",
+      "vehicle": "car",
+      "other": "really dislikes women called Sofia",
+      "catchphrase": "Shōryūken o yaburanu kagiri, omae ni kachime wa nai!",
+      "es": { "other": "no soporta a las mujeres que se llaman Sofía" }
+    },
+    {
+      "name": "Leo Surme",
+      "sex": "male",
+      "hobby": "video games",
+      "hair": "black",
+      "feature": "beard",
+      "vehicle": "car",
+      "other": "normally takes his dog for walks that last all night",
+      "catchphrase": "El perro pego el pedazo!",
+      "es": { "other": "suele sacar a pasear al perro toda la noche" }
+    },
+    {
+      "name": "Agus Forwardslash",
+      "sex": "male",
+      "hobby": "watching terrible films",
+      "hair": "brown",
+      "feature": "short stature",
+      "vehicle": "rollerskates",
+      "other": "is an Apple enthusiast, and not the healthy kind",
+      "catchphrase": "Esto con la terminal de UNIX se arregla",
+      "es": { "other": "es fanático de Apple, y no precisamente de la fruta" }
+    },
+    {
+      "name": "Luigi Visin",
+      "sex": "male",
+      "hobby": "gadgets",
+      "hair": "black",
+      "feature": "beard",
+      "vehicle": "scooter",
+      "other": "showers with a kitchen sponge",
+      "catchphrase": "Me van a llevar a Rafaela? Eso esta como a 20 Susanas de aca",
+      "es": { "other": "se baña con la esponja de cocina" }
+    },
+    {
+      "name": "Martin DKR",
+      "sex": "male",
+      "hobby": "gadgets",
+      "hair": "black",
+      "feature": "short stature",
+      "vehicle": "car",
+      "other": "soon will be able to tell dad jokes",
+      "catchphrase": "Toca de aca, cobani boton!",
+      "es": { "other": "dentro de poco va a empezar a contar dad jokes" }
+    }
+  ]
+}

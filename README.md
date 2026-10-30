@@ -55,11 +55,18 @@ Copied from the game at commit `4e0a45c`, then freed of macroquad:
 
 - `src/art/pixels.rs`, `scene.rs`, `landmarks.rs`: the postcards
   (`scene::paint` gives a `Canvas`).
-- `src/rules/rng.rs`
-- `countries.json`
+- `src/rules/game.rs`, `data.rs`, `rng.rs`: the rules and data loading.
+  Changed here: `Game::route` is public, for the self-playing check, and one
+  `rng.choice` call names its type (`::<&str>`), which the `esp` toolchain's
+  newer Rust can't infer.
+- `src/lang.rs`: English and Spanish. Unchanged: the device has no system
+  language, so it starts in English until one is chosen; the choice is saved
+  through `src/device/storage.rs` (flash) instead of the game's files.
+- `countries.json`, `suspects.json`
 
 Changes to these in the game don't arrive here by themselves: carry them over
-by hand, and note the new commit here.
+by hand, and note the new commit here. Their `#[cfg(test)]` tests don't run
+here (there's no test harness on the device); run them in the game.
 
 ## Checking the wiring
 
@@ -77,6 +84,11 @@ second for 6 s), for a meter or an LED on the display's pins.
 crate's test image, then the whole screen red, green, blue and white. A first
 driver of our own drew corrupted pictures where this one drew right, so
 `src/display.rs` now draws through `mipidsi` too.
+
+`cargo run --release --bin case` (`src/bin/case.rs`) runs the game's rules
+with nothing drawn: it loads and checks the data, then plays a case in English
+and one in Spanish as a careful player would, printing everything the game
+says with timings and free memory. It also counts its starts in flash.
 
 `cargo run --release --bin touch` (`src/bin/touch.rs`) tests the touch panel
 (`src/touch.rs`): tap the three crosshairs to calibrate it, then draw with a

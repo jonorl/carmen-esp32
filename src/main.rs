@@ -2,13 +2,6 @@
 //! For now: a test pattern, then every country's postcard in turn, to try
 //! the screen and see how fast the device paints.
 
-// The device uses only part of what the game does.
-#[allow(dead_code)]
-mod art;
-mod display;
-#[allow(dead_code)]
-mod rules;
-
 use std::time::Instant;
 
 use esp_idf_svc::hal::delay::FreeRtos;
@@ -19,8 +12,8 @@ use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriver};
 use esp_idf_svc::hal::units::FromValueType;
 use log::info;
 
-use art::scene::{self, TimeOfDay};
-use display::{Display, H, W};
+use carmen_esp32::art::scene::{self, TimeOfDay};
+use carmen_esp32::display::{Display, H, W};
 
 const COUNTRIES: &str = include_str!("../countries.json");
 const SECONDS_EACH: u32 = 4;

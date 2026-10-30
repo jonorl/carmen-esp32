@@ -5,6 +5,9 @@ edition = "2024"
 default-run = "carmen-esp32"
 description = "Where in the World? on an ESP32-S3 with an ILI9341 touch screen and a piezo."
 
+[lib]
+harness = false
+
 [[bin]]
 name = "carmen-esp32"
 harness = false # no test harness on the device; keeps rust-analyzer quiet
@@ -13,7 +16,8 @@ harness = false # no test harness on the device; keeps rust-analyzer quiet
 esp-idf-svc = "0.53"
 log = "0.4"
 anyhow = "1"
-serde_json = "1"
+# The data files keep their order: clues come grouped by type as written.
+serde_json = { version = "1", features = ["preserve_order"] }
 mipidsi = "0.10"
 embedded-graphics-core = "0.4"
 

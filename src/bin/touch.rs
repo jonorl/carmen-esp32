@@ -5,13 +5,6 @@
 //! a white dot follows the finger, leaving a trail; tap the top right corner
 //! to clear the screen. The log shows the calibration and each raw reading.
 
-// The test draws no pictures, only rectangles.
-#[allow(dead_code)]
-#[path = "../display.rs"]
-mod display;
-#[path = "../touch.rs"]
-mod touch;
-
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::gpio::{PinDriver, Pull};
 use esp_idf_svc::hal::peripherals::Peripherals;
@@ -20,8 +13,8 @@ use esp_idf_svc::hal::spi::{SpiDeviceDriver, SpiDriver};
 use esp_idf_svc::hal::units::FromValueType;
 use log::info;
 
-use display::{Display, H, Rgb, W};
-use touch::{Calibration, Touch};
+use carmen_esp32::display::{Display, H, Rgb, W};
+use carmen_esp32::touch::{Calibration, Touch};
 
 const BLACK: Rgb = [0, 0, 0];
 const WHITE: Rgb = [255, 255, 255];

@@ -6,11 +6,13 @@ Hardware, wiring and commands are in `README.md`.
 
 ## Files
 
+- `src/lib.rs`: the library the programs share; `src/main.rs` and `src/bin/*` use it as `carmen_esp32::...`.
 - `src/main.rs`: the demo so far (test pattern, then every postcard in turn, logging paint and send times).
 - `src/display.rs`: the screen through the `mipidsi` crate, landscape (`Rotation::Deg90`), BGR, 40 MHz, no DMA. `blit` and `fill` take `[u8; 3]` colours.
 - `src/touch.rs`: the XPT2046 on the same SPI bus (own chip select, 2 MHz). `Calibration::MEASURED` maps raw readings to screen pixels.
-- `src/art/`, `src/rules/`, `countries.json`: copied from the game (see the README).
-- `src/bin/`: hardware checks, `pins` (wiring), `screen` (mipidsi's test image), `touch` (calibration and drawing).
+- `src/art/`, `src/rules/`, `src/lang.rs`, `countries.json`, `suspects.json`: copied from the game (see the README for what was changed in the copies).
+- `src/device/storage.rs`: the game's `storage::read` and `write`, kept in NVS flash; `storage::start` must run first.
+- `src/bin/`: checks, `pins` (wiring), `screen` (mipidsi's test image), `touch` (calibration and drawing), `case` (the rules playing a case, printed to the serial monitor).
 
 ## Learnt on the hardware
 
@@ -24,5 +26,5 @@ Hardware, wiring and commands are in `README.md`.
 ## Commands
 
 - `cargo run --release`: build, flash and monitor the demo.
-- `cargo run --release --bin pins|screen|touch`: the hardware checks.
+- `cargo run --release --bin pins|screen|touch|case`: the checks.
 - `cargo fmt`: 140 columns (`rustfmt.toml`).
