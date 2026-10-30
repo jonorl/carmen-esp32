@@ -1,9 +1,10 @@
 //! Where in the World? on an ESP32-S3 with a 320x240 ILI9341 touch screen:
-//! sets up the screen, the touch panel and flash, loads the data, and hands
-//! each touch to the game (`app.rs`), redrawing the screen after each.
+//! sets up the screen, the touch panel, the piezo and flash, loads the data,
+//! and hands each touch to the game (`app.rs`), redrawing the screen after
+//! each; while a scene plays, ticks it and redraws only the text panel.
 
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::hal::gpio::{PinDriver, Pull};
@@ -14,18 +15,22 @@ use esp_idf_svc::hal::units::FromValueType;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use log::info;
 
-use carmen_esp32::app::App;
+use carmen_esp32::app::{App, Redraw};
+use carmen_esp32::device::sound::Sound;
 use carmen_esp32::device::storage;
 use carmen_esp32::display::{Display, H, W};
 use carmen_esp32::lang;
 use carmen_esp32::rules::data;
 use carmen_esp32::touch::{Calibration, Touch};
+use carmen_esp32::ui::TEXT;
 
 /// How often the touch panel is read.
 const POLL_MS: u32 = 15;
 /// Readings in a row without a press that count as the finger lifting:
 /// fewer and one press reads as two.
 const RELEASED: u32 = 8;
+/// Between a scene's frames: about 30 a second.
+const FRAME: Duration = Duration::from_millis(33);
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -44,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     let calibration = Calibration::MEASURED;
 
     storage::start(EspDefaultNvsPartition::take()?)?;
+    let sound = Sound::start(p.ledc.timer0, p.ledc.channel0, pins.gpio4)?;
     lang::start();
     let data = match data::load(None) {
         Ok((data, _)) => Rc::new(data),
@@ -55,7 +61,16 @@ fn main() -> anyhow::Result<()> {
 
     let mut down = false;
     let mut free = 0;
+    let mut last_frame = Instant::now();
     loop {
+        if app.animating() && last_frame.elapsed() >= FRAME {
+            last_frame = Instant::now();
+            match app.tick() {
+                Redraw::Nothing => {}
+                Redraw::Panel => show_panel(&mut display, &mut app)?,
+                Redraw::Everything => show(&mut display, &mut app)?,
+            }
+        }
         match touch.raw()? {
             Some(raw) => {
                 free = 0;
@@ -78,8 +93,21 @@ fn main() -> anyhow::Result<()> {
             }
             None => {}
         }
+        for cue in app.take_cues() {
+            match cue {
+                Some(notes) => sound.play(notes),
+                None => sound.stop(),
+            }
+        }
         FreeRtos::delay_ms(POLL_MS);
     }
+}
+
+/// Redraws only the text panel, as scenes do.
+fn show_panel(display: &mut Display, app: &mut App) -> anyhow::Result<()> {
+    let cv = app.draw();
+    let (x, y, w, h) = (TEXT.x as usize, TEXT.y as usize, TEXT.w as usize, TEXT.h as usize);
+    display.blit_part(cv.pixels(), x, y, w, h)
 }
 
 fn show(display: &mut Display, app: &mut App) -> anyhow::Result<()> {

@@ -7,6 +7,7 @@ pub mod device;
 pub mod display;
 pub mod lang;
 pub mod rules;
+pub mod scenes;
 pub mod text;
 pub mod touch;
 pub mod ui;

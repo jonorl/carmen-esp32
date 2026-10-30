@@ -13,9 +13,12 @@ It plays the game, laid out as the original (clock and picture on the left,
 text panel and four buttons on the right): type your name on the on-screen
 keyboard, read the briefing, then investigate, fly, keep notes and fill in
 the crime computer until the arrest, a page of text at a time (tap the panel
-for the next). Tap the clock to switch between English and Spanish. Arrests
-are kept in flash per name, and promote you as in the game. Still to come:
-the original's animations, the printer, the map, sound and the online roster.
+for the next). The original's animations play in the text panel (henchmen,
+the final city's warnings, the chase, the walk to jail and the jail; a tap
+skips one), with its tunes on the piezo. Tap the clock to switch between
+English and Spanish. Arrests are kept in flash per name, and promote you as
+in the game. Still to come: the printer, the departure map, proper button
+icons and the online roster.
 
 ## Wiring
 
@@ -70,6 +73,14 @@ Copied from the game at commit `4e0a45c`, then freed of macroquad:
   language, so it starts in English until one is chosen; the choice is saved
   through `src/device/storage.rs` (flash) instead of the game's files.
 - `countries.json`, `suspects.json`
+- `assets/sprites/`: the original's animation frames, traced by Carmen from
+  recordings of it.
+- The tunes: `src/device/tunes.rs` is written from Carmen's recordings
+  (`assets/sounds/`, not copied) by `tools/transcribe.py`, which follows each
+  tune's melody (the strongest pitch above the bass) and raises it by
+  octaves into the piezo's loud range:
+  `python3 tools/transcribe.py ../carmen/assets/sounds` (needs ffmpeg and
+  numpy).
 - `assets/fonts/`: Pixelify Sans, VT323 and Noto Sans (₹ only), already cut
   down to the characters the game shows, with their SIL OFL licences.
 
@@ -105,9 +116,12 @@ smoothed (chosen on the screen over 11 and 14 px), across the screen and in
 a half-screen panel; labels at 11 px and headings at 22 px, both the font's
 own pixels; and VT323 at 25 px for the printer.
 
-`cargo run --release --bin postcards` (`src/bin/postcards.rs`) shows a
-test pattern, then every country's postcard in turn at each time of day,
-logging how long each takes to paint and send.
+`cargo run --release --bin postcards` (`src/bin/postcards.rs`) shows every
+country's postcard at the picture frame's size two ways: shrunk to fit, as
+the game shows it, and the full-size scene through a window.
+
+`cargo run --release --bin sound` (`src/bin/sound.rs`) plays a scale from
+C5 to C8, then every effect and tune, naming each in the log.
 
 `cargo run --release --bin layout` (`src/bin/layout.rs`) mocks two ways to
 lay the game out on 320x240 with real content (Lima's postcard, the clock, a

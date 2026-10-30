@@ -54,6 +54,13 @@ impl<'d> Display<'d> {
         self.area(x, y, w, h, pixels.iter().map(|&c| rgb565(c)))
     }
 
+    /// Sends just the `w` x `h` part of `pixels` (a whole screen, row by row)
+    /// at (x, y): much quicker than the whole screen when only that changed.
+    pub fn blit_part(&mut self, pixels: &[Rgb], x: usize, y: usize, w: usize, h: usize) -> anyhow::Result<()> {
+        let rows = (y..y + h).flat_map(|row| pixels[row * W + x..row * W + x + w].iter().map(|&c| rgb565(c)));
+        self.area(x, y, w, h, rows)
+    }
+
     pub fn fill(&mut self, x: usize, y: usize, w: usize, h: usize, c: Rgb) -> anyhow::Result<()> {
         self.area(x, y, w, h, std::iter::repeat_n(rgb565(c), w * h))
     }

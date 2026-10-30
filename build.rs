@@ -9,6 +9,9 @@
 //! cell lit if enough of it is covered. That gives the font's own pixels, one
 //! screen pixel each (or a square of them at a larger scale). Noto Sans,
 //! there only for ₹, is rasterised the ordinary way.
+//!
+//! It also turns the sprite strips in `assets/sprites` into raw RGBA
+//! (`$OUT_DIR/<name>.rgba`), with their sizes in `$OUT_DIR/sprites.rs`.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -64,6 +67,8 @@ const MARK_LIT: f32 = 0.2;
 fn main() {
     embuild::espidf::sysenv::output();
     println!("cargo:rerun-if-changed=assets/fonts");
+    println!("cargo:rerun-if-changed=assets/sprites");
+    sprites();
     println!("cargo:rerun-if-changed=build.rs");
 
     let mut out = String::new();
@@ -203,4 +208,32 @@ fn font_data(out: &mut String, set: &str, size: u32, ascent: i32, line: i32, gly
     )
     .unwrap();
     format!("&{set}")
+}
+
+/// Each strip as raw RGBA, and a `Strip` naming it, in upper case after its
+/// file (`henchman-stride.png` is `HENCHMAN_STRIDE`).
+fn sprites() {
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let mut code = String::new();
+    let mut files: Vec<_> = std::fs::read_dir("assets/sprites").expect("assets/sprites").filter_map(Result::ok).map(|e| e.path()).collect();
+    files.sort();
+    for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "png")) {
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        let mut decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().expect("a readable PNG");
+        let mut buf = vec![0; reader.output_buffer_size().expect("a PNG size")];
+        let info = reader.next_frame(&mut buf).expect("a PNG frame");
+        let rgba = &buf[..info.buffer_size()];
+        std::fs::write(out_dir.join(format!("{stem}.rgba")), rgba).unwrap();
+        writeln!(
+            code,
+            "pub static {}: Strip = Strip {{ w: {}, h: {}, rgba: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{stem}.rgba\")) }};",
+            stem.to_uppercase().replace('-', "_"),
+            info.width,
+            info.height
+        )
+        .unwrap();
+    }
+    std::fs::write(out_dir.join("sprites.rs"), code).unwrap();
 }

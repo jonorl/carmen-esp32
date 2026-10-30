@@ -4,19 +4,25 @@
 //!
 //! Input is a press and a release: `press` highlights what's under the
 //! finger, `release` acts on it, and `draw` paints the whole screen from the
-//! state, so the screen only changes on a touch.
+//! state. Between touches only scenes change the screen: `tick` moves them
+//! on, and says what to redraw. Sounds are left in `take_cues` for the main
+//! loop to play.
 
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::art::pixels::{Canvas, Rgb};
-use crate::art::scene::{self, TimeOfDay};
+use crate::art::postcard;
+use crate::art::scene::TimeOfDay;
 use crate::device::progress::{MAX_NAME, Progress};
+use crate::device::sound::{self, Notes};
 use crate::display::{H, W};
 use crate::lang::{self, Lang, lang, tr};
 use crate::rules::data::Data;
 use crate::rules::game::{Game, Line, RANKS, Tone, agency, clock_text, game_title, hour_of_day, promotion_news, rank_for};
 use crate::rules::game::{PLACES, same};
 use crate::rules::rng::Rng;
+use crate::scenes::Stage;
 use crate::ui::{self, BUTTON_ORDER, BUTTONS, Button, CLOCK, Fonts, PAD, PICTURE, Pager, Rect, Row, TEXT, rect};
 
 /// Something the finger can press.
@@ -46,6 +52,26 @@ enum Panel {
     Crime,
     /// The case notes: deadline, warrant and everything said so far.
     Notes(Pager),
+    /// Animated moments, one after another, then what happened.
+    Scene(Scene),
+}
+
+struct Scene {
+    /// The one playing first.
+    stages: Vec<Stage>,
+    started: Instant,
+    /// How many of its cues have been played.
+    cued: usize,
+    then: Vec<Line>,
+}
+
+/// What a `tick` changed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Redraw {
+    Nothing,
+    /// Only the text panel.
+    Panel,
+    Everything,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -79,6 +105,8 @@ pub struct App {
     pressed: Option<Target>,
     /// The postcard on show, painted once per city and time of day.
     postcard: Option<((usize, TimeOfDay), Canvas)>,
+    /// Sounds to play (None to stop), for the main loop.
+    cues: Vec<Option<Notes>>,
 }
 
 impl App {
@@ -94,6 +122,58 @@ impl App {
             panel: Panel::Name,
             pressed: None,
             postcard: None,
+            cues: Vec::new(),
+        }
+    }
+
+    /// Sounds the game wants played since last asked, in order; None stops the sound.
+    pub fn take_cues(&mut self) -> Vec<Option<Notes>> {
+        std::mem::take(&mut self.cues)
+    }
+
+    pub fn animating(&self) -> bool {
+        matches!(self.panel, Panel::Scene(_))
+    }
+
+    /// Moves a scene on: plays its cues as they come due, and goes to the
+    /// next stage, or to what happened, when one ends.
+    pub fn tick(&mut self) -> Redraw {
+        let Panel::Scene(scene) = &mut self.panel else { return Redraw::Nothing };
+        let t = scene.started.elapsed().as_secs_f64();
+        let cues = scene.stages[0].cues();
+        while let Some(&(at, notes)) = cues.get(scene.cued)
+            && at <= t
+        {
+            self.cues.push(Some(notes));
+            scene.cued += 1;
+        }
+        if t < scene.stages[0].seconds(scene_area()) {
+            return Redraw::Panel;
+        }
+        self.next_stage();
+        if self.animating() { Redraw::Panel } else { Redraw::Everything }
+    }
+
+    /// Ends the scene's current stage: on to the next, or to what happened.
+    fn next_stage(&mut self) {
+        let Panel::Scene(scene) = &mut self.panel else { return };
+        self.cues.push(None);
+        scene.stages.remove(0);
+        if scene.stages.is_empty() {
+            let then = std::mem::take(&mut scene.then);
+            self.tell(then);
+        } else {
+            scene.started = Instant::now();
+            scene.cued = 0;
+        }
+    }
+
+    /// Plays `stages`, then shows `then`.
+    fn play(&mut self, stages: Vec<Stage>, then: Vec<Line>) {
+        if stages.is_empty() {
+            self.tell(then);
+        } else {
+            self.panel = Panel::Scene(Scene { stages, started: Instant::now(), cued: 0, then });
         }
     }
 
@@ -113,7 +193,8 @@ impl App {
     }
 
     fn buttons_on(&self) -> bool {
-        self.game.as_ref().is_some_and(|g| !g.over) && !matches!(self.panel, Panel::Name | Panel::Story { then: Then::Arrive, .. })
+        self.game.as_ref().is_some_and(|g| !g.over)
+            && !matches!(self.panel, Panel::Name | Panel::Story { then: Then::Arrive, .. } | Panel::Scene(_))
     }
 
     fn target_at(&self, x: i32, y: i32) -> Option<Target> {
@@ -133,7 +214,7 @@ impl App {
                 let k = (ky * KEY_COLUMNS + kx) as usize;
                 (y >= keyboard_top() && kx < KEY_COLUMNS && k < KEYS.len()).then_some(Target::Key(k))
             }
-            Panel::Story { .. } | Panel::Notes(_) => Some(Target::Panel),
+            Panel::Story { .. } | Panel::Notes(_) | Panel::Scene(_) => Some(Target::Panel),
             Panel::Places(_) => self.list_row(y, 3),
             Panel::Flights(dests) => self.list_row(y, dests.len()),
             Panel::Crime => self.list_row(y, self.game.as_ref().map_or(0, |g| g.warrant.len() + 1)),
@@ -152,9 +233,20 @@ impl App {
             Target::Clock => {
                 lang::choose(if lang() == Lang::En { Lang::Es } else { Lang::En });
             }
-            Target::Key(k) => self.key(k),
-            Target::Panel => self.turn_page(),
-            Target::Button(b) => self.button(b),
+            Target::Key(k) => {
+                self.cues.push(Some(sound::KEY));
+                self.key(k);
+            }
+            // A tap skips the rest of a scene's stage.
+            Target::Panel if self.animating() => self.next_stage(),
+            Target::Panel => {
+                self.cues.push(Some(sound::TICK));
+                self.turn_page();
+            }
+            Target::Button(b) => {
+                self.cues.push(Some(sound::TICK));
+                self.button(b);
+            }
             Target::Row(i) => self.row(i),
         }
     }
@@ -220,26 +312,33 @@ impl App {
     fn row(&mut self, i: usize) {
         let Some(game) = self.game.as_mut() else { return };
         let before = game.log.len();
-        let mut extra = Vec::new();
+        let mut stages = Vec::new();
         match &self.panel {
-            Panel::Places(_) => {
-                game.investigate(i);
-                // The front end's own lines, as the desktop shows them over its animations.
-                if let Some((_, first)) = game.henchman.take()
-                    && first
-                {
-                    extra.push(said(
-                        Tone::Warn,
-                        tr("A S.U.R.M.E. henchman! You must be on the right track.", "¡Un secuaz de S.U.R.M.E.! Vas por buen camino."),
-                    ));
+            Panel::Places(places) => {
+                // Places already visited are no walk away.
+                if !game.visited_here().contains(&i) {
+                    stages.push(Stage::Walk(PLACES[places[i]].label().to_string()));
                 }
-                if game.danger.take().is_some() {
-                    extra.push(said(Tone::Bad, tr("Look out! That was close.", "¡Cuidado! Estuvo cerca.")));
+                game.investigate(i);
+                if let Some((kind, first)) = game.henchman.take() {
+                    stages.push(Stage::Henchman { kind, tell: first });
+                }
+                if let Some(kind) = game.danger.take() {
+                    stages.push(Stage::Danger(kind));
+                }
+                if game.over && game.showdown {
+                    stages.push(Stage::Chase { female: game.thief_is_female() });
+                    stages.push(Stage::March { caught: game.won });
+                    stages.push(Stage::Jail { caught: game.won });
                 }
             }
-            Panel::Flights(dests) => game.travel(dests[i]),
+            Panel::Flights(dests) => {
+                stages.push(Stage::Fly(game.country(dests[i]).city().to_string()));
+                game.travel(dests[i]);
+            }
             Panel::Crime => {
                 if i == game.warrant.len() {
+                    stages.push(Stage::Compute);
                     game.compute_warrant();
                 } else {
                     let fields = game.warrant_fields();
@@ -251,14 +350,14 @@ impl App {
                         Some(p) => values.get(p + 1).cloned(),
                     };
                     game.warrant[i].1 = next;
+                    self.cues.push(Some(sound::KEY));
                     return;
                 }
             }
             _ => return,
         }
-        let mut lines = extra;
-        lines.extend(game.log[before..].iter().cloned());
-        self.tell(lines);
+        let then = game.log[before..].to_vec();
+        self.play(stages, then);
     }
 
     // ------------------------------------------------------------ the story
@@ -368,7 +467,7 @@ impl App {
         let key = (game.here, TimeOfDay::at(hour_of_day(game.t)));
         if self.postcard.as_ref().is_none_or(|(k, _)| *k != key) {
             let country = game.country(game.here);
-            self.postcard = Some((key, scene::paint(&country.country, country.lat, key.1, p.w, p.h)));
+            self.postcard = Some((key, postcard::fitted(&country.country, country.lat, key.1, p.w, p.h)));
         }
         if let Some((_, card)) = &self.postcard {
             for (i, &px) in card.pixels().iter().enumerate() {
@@ -386,6 +485,7 @@ impl App {
         match &self.panel {
             Panel::Name => self.draw_keyboard(cv),
             Panel::Story { pager, .. } | Panel::Notes(pager) => pager.draw(cv, &f.body, area),
+            Panel::Scene(scene) => scene.stages[0].draw(cv, f, scene_area(), scene.started.elapsed().as_secs_f64()),
             Panel::Places(places) => {
                 let game = self.game.as_ref().expect("a case");
                 let visited = game.visited_here();
@@ -455,6 +555,12 @@ impl App {
             font.draw(cv, key.x + (key.w - font.width(label)) / 2, key.y + (key.h - font.line_height()) / 2 + font.ascent(), label, ink);
         }
     }
+}
+
+/// Where scenes play: the whole of the text panel inside its frame, so the
+/// characters stand on its bottom edge.
+fn scene_area() -> Rect {
+    TEXT.inner()
 }
 
 /// Where the text panel's text goes.
